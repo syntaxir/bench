@@ -1,0 +1,92 @@
+{
+// Package filter is the filter language of bench/wedge/grammars/filter.sxir written for pigeon:
+// comparisons and list membership of dotted fields, combined with !, && and ||.
+package filter
+
+// Expr is a *Compare, an *In, a *Logic or a *Not.
+type Expr any
+
+// Compare compares a field with a literal.
+type Compare struct {
+	Field, Op, Value string
+}
+
+// In tests a field for membership in a list of literals.
+type In struct {
+	Field  string
+	Values []string
+}
+
+// Logic is && or ||.
+type Logic struct {
+	Left  Expr
+	Op    string
+	Right Expr
+}
+
+// Not is !.
+type Not struct {
+	Op string
+	X  Expr
+}
+
+// foldLeft folds first and the (operator, operand) pairs of rest into left-associative Logic values.
+func foldLeft(first any, rest any) Expr {
+	e := first
+	for _, r := range rest.([]any) {
+		p := r.([]any)
+		e = &Logic{Left: e, Op: string(p[1].([]byte)), Right: p[3]}
+	}
+	return e
+}
+}
+
+Main <- _ e:Or _ EOF {
+	return e, nil
+}
+
+Or <- first:And rest:(_ "||" _ And)* {
+	return foldLeft(first, rest), nil
+}
+
+And <- first:Prefix rest:(_ "&&" _ Prefix)* {
+	return foldLeft(first, rest), nil
+}
+
+Prefix <- "!" _ x:Prefix {
+	return &Not{Op: "!", X: x}, nil
+} / Operand
+
+Operand <- Comparison / "(" _ e:Or _ ")" {
+	return e, nil
+}
+
+Comparison <- f:Field _ o:Op _ v:Literal {
+	return &Compare{Field: f.(string), Op: o.(string), Value: v.(string)}, nil
+} / f:Field _ "in" _ "[" _ first:Literal rest:(_ "," _ Literal)* _ "]" {
+	in := &In{Field: f.(string), Values: []string{first.(string)}}
+	for _, r := range rest.([]any) {
+		in.Values = append(in.Values, r.([]any)[3].(string))
+	}
+	return in, nil
+}
+
+Op <- ("==" / "!=" / "<=" / ">=" / "<" / ">" / "~") {
+	return string(c.text), nil
+}
+
+Field <- [a-zA-Z_] [a-zA-Z0-9_]* ("." [a-zA-Z_] [a-zA-Z0-9_]*)* {
+	return string(c.text), nil
+}
+
+Literal <- (String / Number / "true" / "false" / "null") {
+	return string(c.text), nil
+}
+
+String <- '"' ([^"\\] / '\\' .)* '"'
+
+Number <- '-'? [0-9]+ ('.' [0-9]+)?
+
+_ <- [ \t\r\n]*
+
+EOF <- !.

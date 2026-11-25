@@ -1,0 +1,56 @@
+// A filter language of the size a service accepts in a query parameter: comparisons of dotted
+// fields with literals, membership in a list, and their combination with !, && and ||.
+package filter
+
+type Text = node[string]
+
+type Compare = {
+    Field Text
+    Op    Text
+    Value Text
+}
+
+type In = {
+    Field  Text
+    Values []Text
+}
+
+type Logic = {
+    Left  Expr
+    Op    node[string]
+    Right Expr
+}
+
+type Not = {
+    Op node[string]
+    X  Expr
+}
+
+type Expr ~ Compare | In | Logic | Not
+
+@start
+rule main Expr = ws e:expr ws $$ => $e
+
+rule expr Expr = #operators {
+    skip ws
+    operand comparison
+    operand "(" ws e:expr ws ")" => $e
+    level { infix left "||" => Logic{Left: $lhs, Op: $op, Right: $rhs} }
+    level { infix left "&&" => Logic{Left: $lhs, Op: $op, Right: $rhs} }
+    level { prefix "!" => Not{Op: $op, X: $rhs} }
+}
+
+rule comparison Expr = compare / membership
+rule compare Compare = f:field ws o:op ws v:literal => Compare{Field: $f, Op: $o, Value: $v}
+rule membership In = f:field ws "in" ws "[" ws vs:literals ws "]" => In{Field: $f, Values: $vs}
+
+rule literals = (
+    first:literal rest:(-ws -"," -ws l:literal)*
+) => concat(list($first), map($rest, (r) => r.$l))
+
+rule op Text = ("==" / "!=" / "<=" / ">=" / "<" / ">" / "~") #atomic
+rule field Text = ([a-zA-Z_] [a-zA-Z0-9_]* ("." [a-zA-Z_] [a-zA-Z0-9_]*)*) #atomic
+rule literal Text = (string / number / "true" / "false" / "null") #atomic
+rule string = "\"" ([^"\\] / "\\" .)* "\""
+rule number = "-"? [0-9]+ ("." [0-9]+)?
+rule ws = [ \t\r\n]*

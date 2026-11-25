@@ -1,0 +1,72 @@
+{
+// Package calc is the calculator of grammars/calc.sxir written for pigeon: + and - below
+// * / and %, prefix - and + below a right-associative ^ whose exponent may be a prefix
+// operation, with parentheses and blanks between tokens.
+package calc
+
+// Expr is a Number, a *Binary or a *Unary.
+type Expr any
+
+// Number is the text of a number.
+type Number string
+
+// Binary is an infix operation.
+type Binary struct {
+	Left  Expr
+	Op    string
+	Right Expr
+}
+
+// Unary is a prefix operation.
+type Unary struct {
+	Op string
+	X  Expr
+}
+
+// foldLeft folds first and the (operator, operand) pairs of rest into left-associative Binary values.
+func foldLeft(first any, rest any) Expr {
+	e := first
+	for _, r := range rest.([]any) {
+		p := r.([]any)
+		e = &Binary{Left: e, Op: string(p[1].([]byte)), Right: p[3]}
+	}
+	return e
+}
+}
+
+Main <- _ e:Expr _ EOF {
+	return e, nil
+}
+
+Expr <- first:Term rest:(_ ("+" / "-") _ Term)* {
+	return foldLeft(first, rest), nil
+}
+
+Term <- first:Prefix rest:(_ ("*" / "/" / "%") _ Prefix)* {
+	return foldLeft(first, rest), nil
+}
+
+Prefix <- op:("-" / "+") _ x:Prefix {
+	return &Unary{Op: string(op.([]byte)), X: x}, nil
+} / Pow
+
+// The base is parsed once whether or not an exponent follows: an ordered choice of "Primary ^ ..."
+// and Primary would parse it twice at every level of parentheses.
+Pow <- base:Primary exp:(_ "^" _ Prefix)? {
+	if exp == nil {
+		return base, nil
+	}
+	return &Binary{Left: base, Op: "^", Right: exp.([]any)[3]}, nil
+}
+
+Primary <- Number / "(" _ e:Expr _ ")" {
+	return e, nil
+}
+
+Number <- [0-9]+ ("." [0-9]+)? {
+	return Number(c.text), nil
+}
+
+_ <- [ \t\r\n]*
+
+EOF <- !.

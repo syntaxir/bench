@@ -1,0 +1,108 @@
+{
+// Package json is the JSON grammar of grammars/json.sxir written for pigeon (RFC 8259),
+// with the same values: strings and numbers keep their text, without quotes, escapes included.
+package json
+
+// Value is an *Object, an *Array, a String, a Number, a Bool or a Null.
+type Value any
+
+// Object is a JSON object, its members in order.
+type Object struct{ Members []Member }
+
+// Member is a member of an object.
+type Member struct {
+	Key   String
+	Value Value
+}
+
+// Array is a JSON array.
+type Array struct{ Elements []Value }
+
+// String is the text of a string without its quotes, escapes included.
+type String string
+
+// Number is the text of a number.
+type Number string
+
+// Bool is true or false.
+type Bool string
+
+// Null is null.
+type Null string
+}
+
+Main <- _ v:Value _ EOF {
+	return v, nil
+}
+
+Value <- Object / Array / String / Number / Bool / Null
+
+Object <- "{" _ ms:Members? _ "}" {
+	o := &Object{}
+	if ms != nil {
+		o.Members = ms.([]Member)
+	}
+	return o, nil
+}
+
+Members <- first:Member rest:(_ "," _ Member)* {
+	ms := []Member{first.(Member)}
+	for _, r := range rest.([]any) {
+		ms = append(ms, r.([]any)[3].(Member))
+	}
+	return ms, nil
+}
+
+Member <- k:String _ ":" _ v:Value {
+	return Member{Key: k.(String), Value: v}, nil
+}
+
+Array <- "[" _ es:Elements? _ "]" {
+	a := &Array{}
+	if es != nil {
+		a.Elements = es.([]Value)
+	}
+	return a, nil
+}
+
+Elements <- first:Value rest:(_ "," _ Value)* {
+	es := []Value{first}
+	for _, r := range rest.([]any) {
+		es = append(es, r.([]any)[3])
+	}
+	return es, nil
+}
+
+String <- '"' chars:Chars '"' {
+	return String(chars.([]byte)), nil
+}
+
+Chars <- ([^"\\\x00-\x1f]+ / Escape)* {
+	return c.text, nil
+}
+
+Escape <- '\\' (["\\/bfnrt] / 'u' Hex Hex Hex Hex)
+
+Hex <- [0-9a-fA-F]
+
+Number <- '-'? Int Frac? Exp? {
+	return Number(c.text), nil
+}
+
+Int <- '0' / [1-9] [0-9]*
+
+Frac <- '.' [0-9]+
+
+Exp <- [eE] [+-]? [0-9]+
+
+Bool <- ("true" / "false") {
+	return Bool(c.text), nil
+}
+
+Null <- "null" {
+	return Null(c.text), nil
+}
+
+_ <- [ \t\r\n]*
+
+EOF <- !.
