@@ -20,7 +20,8 @@
 // A capture saves its results in results/ (or -dir), each file with a header that records the
 // provenance of the run (the commits of the checkout and of this harness, toolchain, GOMAXPROCS,
 // GOGC, GOMEMLIMIT, GOEXPERIMENT, the operating system, power and thermal state, benchtime, rounds,
-// the hashes of the binaries, the lock and window held, and the load before and after):
+// the hashes of the binaries, the lock and window held, the load and the power before and after, and
+// the power guard's verdict over the part, power-check):
 //
 //	results.txt          the Go benchmarks of package bench, but generation (go)
 //	results-gen.txt      generation time (BenchmarkGeneration) and the run-time backend compile
@@ -44,7 +45,9 @@
 // base arm built from that revision. A timed part whose geomean A/A ratio is more than 1.5% from 1
 // is rejected: its results go to a .rejected.txt file instead, and the command fails without
 // rendering the document. The timed parts run only under the exclusive benchmark lock in a declared
-// measurement window of the machine, unless -force.
+// measurement window of the machine, on AC power with at least BENCHLOCK_MIN_CHARGE percent (default
+// 50) of charge for the whole run (power.go), unless -force, whose parts are invalid and never
+// released.
 //
 // RESULTS.md is rendered from the files of results/ alone and holds results only (their analysis is
 // in SyntaxIR's docs/performance.md); TestResultsAreUpToDate checks that it matches them. The ranges
@@ -115,7 +118,7 @@ func captureCmd(args []string) error {
 	fl.StringVar(&o.benchtime, "benchtime", "1s", "the -benchtime of each Go benchmark and profilematrix run")
 	fl.StringVar(&o.bench, "bench", ".", "the rows of the go, ts and wedge parts to run, as go test -bench selects them (TypeScript rows are TS/MODE/WORKLOAD); rerun noisy rows with it")
 	fl.StringVar(&o.grammars, "grammars", "", "the rows of the matrix part, comma-separated (default: every row of the manifest)")
-	fl.BoolVar(&o.force, "force", false, "measure without the exclusive lock and window; the headers mark the results as unlocked")
+	fl.BoolVar(&o.force, "force", false, "measure without the exclusive lock, window and power guard; the headers mark the results as unlocked and invalid, and release refuses them")
 	fl.StringVar(&o.node, "node", "node", "the Node.js executable for the TypeScript measurements (24 or later)")
 	fl.Parse(args)
 	if fl.NArg() > 0 {
@@ -243,9 +246,13 @@ func capture(harness, dir string, o options) error {
 		return fmt.Errorf("-rounds must be positive")
 	}
 	lock := ""
+	var guard *powerGuard
 	if timed {
 		var err error
 		if lock, err = timedLock(o.force); err != nil {
+			return err
+		}
+		if guard, err = timedPower(o.force); err != nil {
 			return err
 		}
 	}
@@ -295,7 +302,7 @@ func capture(harness, dir string, o options) error {
 	}
 	newProv := func() *provenance {
 		p := newProvenance(commit, lock, o.rounds, o.benchtime, c.arms(), c.baseRev)
-		p.source, p.harness = source, harnessCommit
+		p.source, p.harness, p.guard = source, harnessCommit, guard
 		return p
 	}
 	goPart := func(name, title string, suites []goSuite, cfg *timedConfig) error {

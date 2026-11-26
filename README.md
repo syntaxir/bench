@@ -53,8 +53,17 @@ temporary worktree, which is removed when the run ends, fails or is interrupted.
 
 A timed run needs the machine to itself: it runs only under the exclusive benchmark lock in a
 declared measurement window (SyntaxIR's `.agents/scripts/benchlock.sh` and `benchwindow.sh`),
-unless `-force`, which marks its results as unlocked and not to be cited. Do not measure on shared
-CI runners.
+unless `-force`, which marks its results as unlocked and invalid, for local experiments only. Do
+not measure on shared CI runners.
+
+A timed run also needs mains power: AC with at least `BENCHLOCK_MIN_CHARGE` percent of charge
+(default 50, on AC too) for the whole run. The lock refuses to start otherwise and reads the power
+every 30 seconds while the run lasts, into the log it names in `SXIR_POWER_LOG`; the harness
+refuses to start on bad power and records each part's readings and verdict in its header
+(`power-start`, `power-end`, `power-check`). On a Mac, a failed `pmset` or a reading that names
+neither AC nor battery counts as bad power. A part with a bad reading, measured on a system with
+no power probe, or measured with `-force`, is invalid. The figure `run-power` sums the verdicts of the timed files: `ok`, `pre-method` for
+files measured before the timed method, or `invalid`.
 
 ## Releases
 
@@ -65,10 +74,12 @@ go run ./cmd/timed release -tag results-v2
 go run ./cmd/timed pin -main ../syntaxir -tag results-v2
 ```
 
-`release` refuses a dirty tree, generated files that do not match `results/`, and a commit that is
-not `main` of the remote. `pin` downloads the release into a SyntaxIR checkout: it writes
-`site/benchmarks.json` with the SHA-256 of both assets, the release's `figures.json` as
-`site/figures.json`, and the marked figures of SyntaxIR's documents, so that the bump is one commit.
+`release` refuses a dirty tree, an `invalid` run-power, generated files that do not match
+`results/`, and a commit that is not `main` of the remote. `pin` downloads the release into a
+SyntaxIR checkout: it writes `site/benchmarks.json` with the SHA-256 of both assets, the release's
+`figures.json` as `site/figures.json`, and the marked figures of SyntaxIR's documents, so that the
+bump is one commit. It refuses an `invalid` run-power, and a release without one other than
+`results-v1` and `results-v2`, which predate the guard.
 
 ## Development
 

@@ -32,17 +32,29 @@ type provenance struct {
 	loadEnd   string            // the load right after the last sample (measured); read at header if unset
 	binaries  map[string]string // by arm: the SHA-256 of its binaries
 	extra     []string          // more "key: value" lines (node version, the analysis)
+
+	guard      *powerGuard  // the power guard of a timed capture; nil for a part that measures no time
+	powerStart powerReading // the power when the part began
+	powerEnd   *powerReading
+	powerCheck string // the verdict of the guard over the part, set by measured
 }
 
 // newProvenance records what is known before a capture runs.
 func newProvenance(commit, lock string, rounds int, benchtime string, arms []string, baseRev string) *provenance {
 	return &provenance{commit: commit, rounds: rounds, benchtime: benchtime, arms: arms, baseRev: baseRev,
-		lock: lock, loadStart: loadAverage(), binaries: map[string]string{}}
+		lock: lock, loadStart: loadAverage(), binaries: map[string]string{}, powerStart: readPower()}
 }
 
-// measured records the load right after the last sample of a capture, before its analysis and
-// saving, as the load after the run.
-func (p *provenance) measured() { p.loadEnd = loadAverage() }
+// measured records the load and the power right after the last sample of a capture, before its
+// analysis and saving, as those after the run, and the power guard's verdict over the part.
+func (p *provenance) measured() {
+	p.loadEnd = loadAverage()
+	end := readPower()
+	p.powerEnd = &end
+	if p.guard != nil {
+		p.powerCheck = p.guard.check(p.powerStart, end)
+	}
+}
 
 // loadAfter returns the load after a run as the header records it. The values are the 1, 5 and 15
 // minute averages, which the system updates every few seconds, so after a short run they can equal
@@ -82,6 +94,11 @@ func (p *provenance) header() []byte {
 	line("gomemlimit", envOr("GOMEMLIMIT", "off (default)"))
 	line("goexperiment", goExperiment())
 	line("power", powerState())
+	line("power-start", p.powerStart.String())
+	if p.powerEnd != nil {
+		line("power-end", p.powerEnd.String())
+	}
+	line("power-check", p.powerCheck)
 	line("thermal", thermalState())
 	line("benchtime", p.benchtime)
 	if p.rounds > 0 {

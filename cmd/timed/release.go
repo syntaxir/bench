@@ -46,8 +46,9 @@ type pin struct {
 }
 
 // releaseCmd publishes RESULTS.md and figures.json of HEAD as a results release, with the gh
-// command. It refuses unless the tree is clean, both files match results/, and HEAD is the main
-// branch of the remote, so that the release names a commit that anyone can check out.
+// command. It refuses unless the tree is clean, the timed results passed the power guard or predate
+// it (run-power, see power.go), both files match results/, and HEAD is the main branch of the
+// remote, so that the release names a commit that anyone can check out.
 func releaseCmd(args []string) error {
 	fl := flag.NewFlagSet("release", flag.ExitOnError)
 	tag := fl.String("tag", "", "the tag of the release: results-vN (required)")
@@ -67,6 +68,13 @@ func releaseCmd(args []string) error {
 	if err != nil {
 		return err
 	}
+	values, err := decodeFigures(figures)
+	if err != nil {
+		return err
+	}
+	if why := releasable(values, *tag); why != "" {
+		return fmt.Errorf("the results are not releasable: %s", why)
+	}
 	for name, want := range map[string][]byte{"RESULTS.md": doc, "figures.json": figures} {
 		got, err := os.ReadFile(filepath.Join(harness, name))
 		if err != nil {
@@ -84,10 +92,6 @@ func releaseCmd(args []string) error {
 	if f := strings.Fields(remote); len(f) == 0 || f[0] != head {
 		return fmt.Errorf("HEAD %s is not the main branch of origin (%s): push it first", head, strings.TrimSpace(remote))
 	}
-	values, err := decodeFigures(figures)
-	if err != nil {
-		return err
-	}
 	notes := fmt.Sprintf("The timed results of SyntaxIR commit %s, measured on %s.", values["run-commit"], values["run-date"])
 	gh := []string{"release", "create", *tag, "--repo", *repo, "--target", head, "--title", *tag, "--notes", notes}
 	for _, a := range releaseAssets {
@@ -104,7 +108,8 @@ func releaseCmd(args []string) error {
 // pinCmd pins a results release in a SyntaxIR checkout: it downloads the release's assets, writes
 // site/benchmarks.json with their digests, writes the release's figures.json to site/figures.json and
 // rewrites the marked figures of the checkout's documents with its values. The checkout's changes
-// are then one commit.
+// are then one commit. It refuses a release whose run-power is invalid, or that has none and is not
+// one of the releases made before the power guard.
 func pinCmd(args []string) error {
 	fl := flag.NewFlagSet("pin", flag.ExitOnError)
 	mainDir := fl.String("main", "", "the SyntaxIR checkout to pin the release in (required)")
@@ -128,6 +133,9 @@ func pinCmd(args []string) error {
 	values, err := decodeFigures(assets["figures.json"])
 	if err != nil {
 		return err
+	}
+	if why := releasable(values, *tag); why != "" {
+		return fmt.Errorf("%s is not pinnable: %s", *tag, why)
 	}
 	p := pin{Repository: *repo, Tag: *tag, ResultsSHA256: sha256Hex(assets["RESULTS.md"]), FiguresSHA256: sha256Hex(assets["figures.json"])}
 	data, err := json.MarshalIndent(p, "", "  ")

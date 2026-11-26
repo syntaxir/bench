@@ -36,6 +36,7 @@
     "recognize-vs-valid": "8.05×",
     "run-commit": "13b3d186",
     "run-date": "2026-10-29",
+    "run-power": "pre-method: results.txt, results-ts.txt",
     "stream-closure-time": "78.5 ms",
     "stream-std-time": "6.82 ms",
     "stream-vs-std": "11.5×",

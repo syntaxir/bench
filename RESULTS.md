@@ -212,6 +212,7 @@ mark it. A table row is the value that the guides carry.
 |:--|:--|--:|
 | `run-commit` | The commit that the results were measured at | 13b3d186 |
 | `run-date` | The date of the run | 2026-10-29 |
+| `run-power` | The power guard's verdict on the timed results: ok, pre-method (measured before the timed method and the guard) or invalid | pre-method: results.txt, results-ts.txt |
 | `generated-vs-closure-codepoints` | Generated Go `Parse` time over closure time, in code points, across the eight workloads | 0.44–0.61× |
 | `generated-vs-closure-bytes` | The same in bytes | 0.50–0.66× |
 | `bytecode-vs-closure` | Recursive bytecode VM parse time over closure time, both position units together | 1.13–1.35× |

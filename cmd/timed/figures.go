@@ -84,6 +84,8 @@ var figureCatalog = []figure{
 		value: func(c *figureCalc) string { return c.meta["commit"] }},
 	{name: "run-date", meaning: "The date of the run",
 		value: func(c *figureCalc) string { return c.meta["date"] }},
+	{name: "run-power", meaning: "The power guard's verdict on the timed results: ok, pre-method (measured before the timed method and the guard) or invalid",
+		value: func(c *figureCalc) string { return runPower(c.meta) }},
 	{name: "generated-vs-closure-codepoints", meaning: "Generated Go `Parse` time over closure time, in code points, across the eight workloads",
 		value: func(c *figureCalc) string {
 			return factorRange(c.ratios(allWorkloads, benchName("Parse/%s/generated/codepoints"), benchName("Parse/%s/closure/codepoints"), nsOf))
