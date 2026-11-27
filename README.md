@@ -6,7 +6,8 @@ and their results. The harness measures a SyntaxIR checkout through its public s
 SyntaxIR's internal packages, so any commit of SyntaxIR that has the benchmarks can be measured and
 compared with another.
 
-[`RESULTS.md`](RESULTS.md) holds the latest results. SyntaxIR's site shows the results of a
+[`RESULTS.md`](RESULTS.md) holds the latest results, and [`SETTINGS.md`](SETTINGS.md) the timing of
+each optimization flag in the measurement window that last covered it. SyntaxIR's site shows the results of a
 published release of this repository as its benchmarks page, and SyntaxIR's documents quote the
 figures of that release.
 
@@ -19,7 +20,7 @@ figures of that release.
 | `wedge/` | The wedge benchmark: SyntaxIR's generated parsers against other Go parser generators on the same grammars, a module of its own |
 | `scripts/ts-parse.mjs` | Times a generated TypeScript parser under Node, one fresh process per measurement |
 | `results/` | The saved results, each file with the provenance of its run |
-| `RESULTS.md`, `figures.json` | Generated from `results/`; never edited by hand |
+| `RESULTS.md`, `figures.json`, `SETTINGS.md` | Generated from `results/`; never edited by hand |
 
 ## Method
 
@@ -42,14 +43,37 @@ go run ./cmd/timed -main ../syntaxir                       # measure a checkout 
 go run ./cmd/timed -main ../syntaxir -base main -rounds 20 # compare with a revision
 go run ./cmd/timed -main https://github.com/syntaxir/syntaxir.git -head v0.3.0
 go run ./cmd/timed -main ../syntaxir -parts go -bench 'Parse/JSON' -rounds 2 -force
-go run ./cmd/timed render                                  # rewrite RESULTS.md and figures.json
+go run ./cmd/timed render                                  # rewrite RESULTS.md, figures.json, SETTINGS.md
 ```
 
 `-main` names a local checkout or a Git URL; a URL is cloned into the user's cache directory.
 Without `-head` a local checkout is measured as it is; any other revision is checked out into a
 temporary worktree, which is removed when the run ends, fails or is interrupted. `-parts` selects
-`go`, `gen`, `ts`, `matrix`, `wedge` and `size`; `-bench` and `-grammars` rerun some rows into
+`go`, `gen`, `ts`, `matrix`, `wedge` and `size` (by default) and `settings`; `-bench` and `-grammars` rerun some rows into
 `-rerun` files without rendering. `go doc ./cmd/timed` describes every file of `results/`.
+
+## Settings
+
+The `settings` part, which runs only when `-parts` names it, times each optimization flag of the
+checkout against each profile: for every setting of the checkout's workload manifest that reaches
+the generated Go parsers, `cmd/profilematrix` generates every row with the flag set against the
+profile (off where the profile turns it on, on otherwise) and times it against the profile's own
+parsers and their A/A control. Each profile's run is saved as `results/settings/STAMP-PROFILE.txt`
+with its provenance, and `SETTINGS.md` shows, for each profile and flag, the run that last covered
+it. It runs at each milestone review and before a release, over every setting, and for a proposed
+state change of a flag, over that flag (`-settings`, and `-profiles` for some profiles). A capture
+keeps only the runs that some flag still takes its last timing from, and a rejected or invalid run
+newer than those.
+
+```bash
+go run ./cmd/timed -main ../syntaxir -parts settings -rounds 20               # every setting
+go run ./cmd/timed -main ../syntaxir -parts settings -settings guards -rounds 20
+go run ./cmd/timed stale -main ../syntaxir -since 2026-12-01                   # the milestone review
+```
+
+`stale` lists the adopted and opt-in flags of the checkout whose last window is older than
+`-since`, the start of the current milestone, or that no window has timed. It does not fail: the
+review reads it and times the flags it names in the next window.
 
 A timed run needs the machine to itself: it runs only under the exclusive benchmark lock in a
 declared measurement window (SyntaxIR's `.agents/scripts/benchlock.sh` and `benchwindow.sh`),

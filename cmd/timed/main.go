@@ -1,11 +1,13 @@
 // Command timed measures a SyntaxIR checkout by the timed measurement method of SyntaxIR's
-// docs/performance.md, saves the results in results/ and writes RESULTS.md and figures.json from
-// them, so that neither is ever edited by hand:
+// docs/performance.md, saves the results in results/ and writes RESULTS.md, figures.json and
+// SETTINGS.md from them, so that none is ever edited by hand:
 //
 //	go run ./cmd/timed -main ../syntaxir                  # measure the checkout as it is
 //	go run ./cmd/timed -main ../syntaxir -base v0.3.0     # ... and compare it with a revision
 //	go run ./cmd/timed -main https://github.com/syntaxir/syntaxir.git -head main
-//	go run ./cmd/timed render                             # rewrite RESULTS.md and figures.json
+//	go run ./cmd/timed render                             # rewrite RESULTS.md, figures.json, SETTINGS.md
+//	go run ./cmd/timed -main ../syntaxir -parts settings  # time every setting against every profile
+//	go run ./cmd/timed stale -main ../syntaxir -since 2026-12-01
 //	go run ./cmd/timed release -tag results-v3            # publish them as a release
 //	go run ./cmd/timed pin -main ../syntaxir -tag results-v3
 //
@@ -34,12 +36,17 @@
 //	                     generators' on the same grammars (wedge)
 //	results-size.txt     the sizes of the generated Go and TypeScript parsers, as the checkout's
 //	                     go run ./bench/metrics collect -parts sizes reports them (size)
+//	settings/STAMP-PROFILE.txt  the settings part (settings.go): each flag of the checkout set
+//	                     against the profile, timed by cmd/profilematrix against the profile's own
+//	                     parsers; only the runs that some flag still takes its last timing from are
+//	                     kept
 //	results-compare.txt  the A/A analysis of the timed parts and, with -base, the A/B verdicts
 //	*-rerun.txt          the rows that -bench (go, ts, wedge) or -grammars (matrix) select, instead of
 //	                     the part's file: a rerun of noisy rows or a focused comparison, which leaves
 //	                     the document as it is
 //
-// -parts selects the parts (default all) and keeps the files of the others. The timed parts (go,
+// -parts selects the parts (default all but settings, which -settings and -profiles narrow) and
+// keeps the files of the others. The timed parts (go,
 // gen, ts, matrix, wedge) run in interleaved, rotated rounds (-rounds, at least 20 for a landing
 // claim) with an A/A control arm, a byte-identical copy of the measured binaries, and with -base a
 // base arm built from that revision. A timed part whose geomean A/A ratio is more than 1.5% from 1
@@ -48,6 +55,10 @@
 // measurement window of the machine, on AC power with at least BENCHLOCK_MIN_CHARGE percent (default
 // 50) of charge for the whole run (power.go), unless -force, whose parts are invalid and never
 // released.
+//
+// SETTINGS.md is rendered from results/settings/: each flag's last measurement window per profile.
+// go run ./cmd/timed stale -main ../syntaxir -since DATE lists the adopted and opt-in flags of the
+// checkout whose last window predates DATE, the start of the current milestone.
 //
 // RESULTS.md is rendered from the files of results/ alone and holds results only (their analysis is
 // in SyntaxIR's docs/performance.md); TestResultsAreUpToDate checks that it matches them. The ranges
@@ -65,13 +76,17 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // parts are the parts of a capture, in the order they run; timedParts are the ones that measure
 // time.
+// defaultParts are the parts that a capture runs unless -parts selects others: all but settings,
+// which runs in the windows of a milestone review or of a proposed state change of a flag.
 var (
-	parts      = []string{"go", "gen", "ts", "matrix", "wedge", "size"}
-	timedParts = map[string]bool{"go": true, "gen": true, "ts": true, "matrix": true, "wedge": true}
+	parts        = []string{"go", "gen", "ts", "matrix", "wedge", "size", "settings"}
+	defaultParts = parts[:len(parts)-1]
+	timedParts   = map[string]bool{"go": true, "gen": true, "ts": true, "matrix": true, "wedge": true, "settings": true}
 )
 
 // options are the flags of a capture.
@@ -79,6 +94,8 @@ type options struct {
 	main, head, base string
 	dir, parts, node string
 	grammars         string
+	settings         string
+	profiles         string
 	rounds           int
 	benchtime, bench string
 	force            bool
@@ -94,6 +111,8 @@ func main() {
 			err = pinCmd(os.Args[2:])
 		case "release":
 			err = releaseCmd(os.Args[2:])
+		case "stale":
+			err = staleCmd(os.Args[2:], os.Stdout)
 		default:
 			err = captureCmd(os.Args[1:])
 		}
@@ -113,16 +132,18 @@ func captureCmd(args []string) error {
 	fl.StringVar(&o.head, "head", "", "the revision to measure (default: a local checkout as it is; main for a URL)")
 	fl.StringVar(&o.base, "base", "", "a revision to compare with: adds a base arm built from it, and the A/B verdicts")
 	fl.StringVar(&o.dir, "dir", "", "directory of the results files (default: results/ of this repository)")
-	fl.StringVar(&o.parts, "parts", strings.Join(parts, ","), "parts to capture, comma-separated: "+strings.Join(parts, ", "))
+	fl.StringVar(&o.parts, "parts", strings.Join(defaultParts, ","), "parts to capture, comma-separated: "+strings.Join(parts, ", "))
 	fl.IntVar(&o.rounds, "rounds", 10, "interleaved rounds of every timed measurement (20 for a landing claim)")
 	fl.StringVar(&o.benchtime, "benchtime", "1s", "the -benchtime of each Go benchmark and profilematrix run")
 	fl.StringVar(&o.bench, "bench", ".", "the rows of the go, ts and wedge parts to run, as go test -bench selects them (TypeScript rows are TS/MODE/WORKLOAD); rerun noisy rows with it")
 	fl.StringVar(&o.grammars, "grammars", "", "the rows of the matrix part, comma-separated (default: every row of the manifest)")
+	fl.StringVar(&o.settings, "settings", "", "the flags of the settings part, comma-separated (default: every flag that reaches the generated Go parsers)")
+	fl.StringVar(&o.profiles, "profiles", "", "the profiles of the settings part, comma-separated (default: every profile)")
 	fl.BoolVar(&o.force, "force", false, "measure without the exclusive lock, window and power guard; the headers mark the results as unlocked and invalid, and release refuses them")
 	fl.StringVar(&o.node, "node", "node", "the Node.js executable for the TypeScript measurements (24 or later)")
 	fl.Parse(args)
 	if fl.NArg() > 0 {
-		return fmt.Errorf("unexpected arguments %q (subcommands: render, pin, release)", fl.Args())
+		return fmt.Errorf("unexpected arguments %q (subcommands: render, pin, release, stale)", fl.Args())
 	}
 	if o.main == "" {
 		return errors.New("-main names the SyntaxIR checkout to measure")
@@ -158,13 +179,18 @@ func renderCmd(args []string) error {
 	return renderRepository(harness)
 }
 
-// renderRepository writes RESULTS.md and figures.json of the repository from its results/.
+// renderRepository writes RESULTS.md, figures.json and SETTINGS.md of the repository from its
+// results/.
 func renderRepository(harness string) error {
 	doc, figures, err := renderResults(filepath.Join(harness, "results"))
 	if err != nil {
 		return err
 	}
-	for name, data := range map[string][]byte{"RESULTS.md": doc, "figures.json": figures} {
+	settings, err := renderSettings(filepath.Join(harness, "results"))
+	if err != nil {
+		return err
+	}
+	for name, data := range map[string][]byte{"RESULTS.md": doc, "figures.json": figures, "SETTINGS.md": settings} {
 		path := filepath.Join(harness, name)
 		if err := os.WriteFile(path, data, 0o644); err != nil {
 			return err
@@ -244,6 +270,12 @@ func capture(harness, dir string, o options) error {
 	}
 	if o.rounds < 1 {
 		return fmt.Errorf("-rounds must be positive")
+	}
+	if selected["settings"] && o.grammars != "" {
+		return fmt.Errorf("-grammars selects rows of the matrix part; the settings part times every row")
+	}
+	if !selected["settings"] && (o.settings != "" || o.profiles != "") {
+		return fmt.Errorf("-settings and -profiles select the variants of the settings part, which -parts does not select")
 	}
 	lock := ""
 	var guard *powerGuard
@@ -388,6 +420,49 @@ func capture(harness, dir string, o options) error {
 		}
 		name := o.resultsName("wedge", "results-wedge.txt")
 		if err := goPart(name, "Wedge ("+name+")", wedgeSuites, c); err != nil {
+			return err
+		}
+	}
+	if selected["settings"] {
+		m, err := c.manifest()
+		if err != nil {
+			return err
+		}
+		profiles, byProfile, err := selectSettings(m, o.settings, o.profiles)
+		if err != nil {
+			return err
+		}
+		for _, p := range profiles {
+			prov := newProv()
+			prov.arms = []string{armHead, armControl}
+			prov.baseRev = ""
+			prov.extra = append(prov.extra, "profile: "+p)
+			for _, v := range byProfile[p] {
+				prov.extra = append(prov.extra, fmt.Sprintf("setting: %s %d %s", v.Flag, v.Value, v.State))
+			}
+			body, err := captureSettings(c, m, p, byProfile[p])
+			if err != nil {
+				return err
+			}
+			prov.measured()
+			a, err := analyze(matrixSamples(body))
+			if err != nil {
+				return err
+			}
+			prov.extra = append(prov.extra, a.summary()...)
+			rejected = rejected || a.rejected
+			invalid := strings.HasPrefix(prov.lock, "unlocked") || prov.powerCheck != "ok"
+			name := settingsFileName(time.Now(), p, a.rejected, invalid)
+			a.write(&compare, "Settings, profile "+p+" ("+name+")", "ns/pass")
+			if err := os.MkdirAll(filepath.Join(dir, settingsDir), 0o755); err != nil {
+				return err
+			}
+			fmt.Fprintln(os.Stderr, "saving", filepath.Join(dir, name))
+			if err := os.WriteFile(filepath.Join(dir, name), append(prov.header(), body...), 0o644); err != nil {
+				return err
+			}
+		}
+		if err := pruneSettingsRuns(dir); err != nil {
 			return err
 		}
 	}

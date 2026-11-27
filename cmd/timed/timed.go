@@ -479,26 +479,32 @@ func analyze(samples map[string]map[string][]float64, order []string) (*analysis
 			r.hasBase = true
 			r.ratio, r.rLo, r.rHi, r.ratioCI = ratioCI(b, h, confidence)
 			_, r.p = mannWhitney(h, b)
-			switch spread := math.Abs(r.aa - 1); {
-			case r.noisy:
-				r.verdict = verdictNoisy
-			case !r.ratioCI:
-				r.verdict = verdictFew
-			case r.rLo <= 1 && 1 <= r.rHi:
-				r.verdict = verdictSame
-			case math.Abs(r.ratio-1) <= spread:
-				r.verdict = verdictInSpread
-			case r.ratio < 1:
-				r.verdict = verdict(fmt.Sprintf("faster by %.1f%%", (1-r.ratio)*100))
-			default:
-				r.verdict = verdict(fmt.Sprintf("slower by %.1f%%", (r.ratio-1)*100))
-			}
+			r.verdict = judge(r.aa, r.ratio, r.rLo, r.rHi, r.ratioCI)
 		}
 		a.rows = append(a.rows, r)
 	}
 	a.geomean = math.Exp(logSum / float64(n))
 	a.rejected = math.Abs(a.geomean-1) > aaLimit
 	return a, nil
+}
+
+// judge returns the verdict on a ratio of medians with its interval (ok when there is one), for a
+// row whose A/A ratio is aa: no claim if the row is noisy or the interval is missing, and otherwise a
+// claim only if the interval does not hold 1 and the effect is larger than the row's A/A spread.
+func judge(aa, ratio, lo, hi float64, ok bool) verdict {
+	switch spread := math.Abs(aa - 1); {
+	case spread > aaLimit:
+		return verdictNoisy
+	case !ok:
+		return verdictFew
+	case lo <= 1 && 1 <= hi:
+		return verdictSame
+	case math.Abs(ratio-1) <= spread:
+		return verdictInSpread
+	case ratio < 1:
+		return verdict(fmt.Sprintf("faster by %.1f%%", (1-ratio)*100))
+	}
+	return verdict(fmt.Sprintf("slower by %.1f%%", (ratio-1)*100))
 }
 
 // summary returns the lines that the header of the results records about the analysis.

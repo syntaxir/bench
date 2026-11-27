@@ -21,7 +21,11 @@ func TestResultsAreUpToDate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for name, want := range map[string][]byte{"RESULTS.md": doc, "figures.json": figures} {
+	settings, err := renderSettings(resultsDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string][]byte{"RESULTS.md": doc, "figures.json": figures, "SETTINGS.md": settings} {
 		got, err := os.ReadFile(filepath.Join(harness, name))
 		if err != nil {
 			t.Fatal(err)
