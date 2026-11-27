@@ -27,6 +27,9 @@ type Manifest struct {
 	TS []TS `json:"ts"`
 	// Matrix are the rows of the language-grammar matrix.
 	Matrix []Row `json:"matrix"`
+	// Settings are the per-setting variants: each optimization flag of the checkout set against each
+	// profile. A checkout that predates them exports none.
+	Settings []Setting `json:"settings"`
 	// Dir is the directory of the manifest, which the paths of the inputs are relative to.
 	Dir string `json:"-"`
 }
@@ -49,6 +52,22 @@ type Row struct {
 	// a long CSV file with the generated Document) or stream (ParseStream of a long CSV file).
 	Program string   `json:"program"`
 	Inputs  []string `json:"inputs"` // relative to the manifest's directory
+}
+
+// Setting is a flag of the checkout set against a profile: the unit of the per-setting timing.
+type Setting struct {
+	Profile string `json:"profile"`
+	Flag    string `json:"flag"`
+	// Value is 0 where the profile turns the flag on, and otherwise the value that turns it on.
+	Value int `json:"value"`
+	// State is the flag's state in the checkout's catalog: adopted, opt-in or experiment.
+	State string `json:"state"`
+	// Args are the options of sxir gen, added to those of a row, that build the variant. They start
+	// with -optimize and the profile, which alone build the profile's own parser.
+	Args []string `json:"args"`
+	// Go says whether the flag reaches the generated Go parsers and keeps their output, so that a
+	// timing of them measures it.
+	Go bool `json:"go"`
 }
 
 // Programs are the measuring programs that a row may name.
@@ -100,6 +119,17 @@ func Load(dir string) (*Manifest, error) {
 		}
 		inputs = append(inputs, r.Inputs...)
 	}
+	settings := map[string]bool{}
+	for _, v := range m.Settings {
+		key := v.Profile + " " + v.Flag
+		if settings[key] {
+			return nil, fmt.Errorf("the workload manifest has the setting %s of profile %s twice", v.Flag, v.Profile)
+		}
+		settings[key] = true
+		if len(v.Args) < 2 || v.Args[0] != "-optimize" || v.Args[1] != v.Profile {
+			return nil, fmt.Errorf("setting %s of profile %s: the options %q do not start with -optimize %s", v.Flag, v.Profile, v.Args, v.Profile)
+		}
+	}
 	for _, in := range inputs {
 		if _, err := os.Stat(m.Path(in)); err != nil {
 			return nil, fmt.Errorf("the workload manifest names a missing input: %w", err)
@@ -119,6 +149,17 @@ func (m *Manifest) Row(name string) (Row, bool) {
 		}
 	}
 	return Row{}, false
+}
+
+// Profiles lists the profiles of the settings in the manifest's order.
+func (m *Manifest) Profiles() []string {
+	var names []string
+	for _, v := range m.Settings {
+		if !slices.Contains(names, v.Profile) {
+			names = append(names, v.Profile)
+		}
+	}
+	return names
 }
 
 // RowNames lists the names of the matrix rows in the manifest's order.

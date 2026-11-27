@@ -32,6 +32,11 @@ const valid = `{
   "matrix": [
     {"name": "x", "grammar": "g/x.sxir", "gen": ["-types"], "program": "parse", "inputs": ["matrix/x/b.txt"]},
     {"name": "x-stream", "grammar": "g/x.sxir", "gen": ["-types"], "extra": ["-stream"], "program": "stream", "inputs": ["matrix/x/c.txt"]}
+  ],
+  "settings": [
+    {"profile": "speed", "flag": "guards", "value": 0, "state": "adopted", "args": ["-optimize", "speed", "-no-opt", "guards"], "go": true},
+    {"profile": "size", "flag": "guards", "value": 0, "state": "adopted", "args": ["-optimize", "size", "-no-opt", "guards"], "go": true},
+    {"profile": "speed", "flag": "class-tables", "value": 5, "state": "adopted", "args": ["-optimize", "speed", "-opt", "class-tables=5"], "go": true}
   ]
 }`
 
@@ -53,17 +58,23 @@ func TestLoad(t *testing.T) {
 	if _, ok := m.Row("y"); ok {
 		t.Error("an unknown row was found")
 	}
+	if got := strings.Join(m.Profiles(), " "); got != "speed size" || len(m.Settings) != 3 || m.Settings[2].Value != 5 {
+		t.Errorf("profiles %s, settings %+v", got, m.Settings)
+	}
 }
 
 // TestLoadRefuses checks that a manifest of another version, with an unknown program, a missing
-// input, a row without inputs or a row named twice is refused.
+// input, a row without inputs, a row or a setting named twice, or a setting whose options do not
+// start with its profile is refused.
 func TestLoadRefuses(t *testing.T) {
 	for name, c := range map[string]struct{ old, new, want string }{
-		"version":   {`"version": 1`, `"version": 2`, "version 2"},
-		"program":   {`"program": "stream"`, `"program": "edit"`, "unknown program"},
-		"input":     {`"matrix/x/c.txt"`, `"matrix/x/d.txt"`, "missing input"},
-		"no inputs": {`"inputs": ["matrix/x/c.txt"]`, `"inputs": []`, "no inputs"},
-		"twice":     {`"name": "x-stream"`, `"name": "x"`, "twice"},
+		"version":       {`"version": 1`, `"version": 2`, "version 2"},
+		"program":       {`"program": "stream"`, `"program": "edit"`, "unknown program"},
+		"input":         {`"matrix/x/c.txt"`, `"matrix/x/d.txt"`, "missing input"},
+		"no inputs":     {`"inputs": ["matrix/x/c.txt"]`, `"inputs": []`, "no inputs"},
+		"twice":         {`"name": "x-stream"`, `"name": "x"`, "twice"},
+		"setting twice": {`"profile": "size", "flag": "guards"`, `"profile": "speed", "flag": "guards"`, "twice"},
+		"setting args":  {`"args": ["-optimize", "size",`, `"args": ["-optimize", "speed",`, "do not start with -optimize size"},
 	} {
 		_, err := Load(manifest(t, strings.Replace(valid, c.old, c.new, 1)))
 		if err == nil || !strings.Contains(err.Error(), c.want) {
