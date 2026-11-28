@@ -450,9 +450,6 @@ func staleCmd(args []string, w io.Writer) error {
 	if *main == "" || *since == "" {
 		return errors.New("stale: -main and -since are required")
 	}
-	if _, err := time.Parse("2006-01-02", *since); err != nil {
-		return fmt.Errorf("stale: -since: %w", err)
-	}
 	if *dir == "" {
 		harness, err := harnessRoot()
 		if err != nil {
@@ -478,6 +475,9 @@ func staleCmd(args []string, w io.Writer) error {
 
 // listStale writes the listing of staleCmd.
 func listStale(w io.Writer, m *workloads.Manifest, last map[string]*settingsRun, since string) error {
+	if _, err := time.Parse("2006-01-02", since); err != nil {
+		return fmt.Errorf("-since: want the date YYYY-MM-DD: %w", err)
+	}
 	if len(m.Settings) == 0 {
 		return errors.New("the checkout's workload manifest has no settings: it predates the settings part")
 	}

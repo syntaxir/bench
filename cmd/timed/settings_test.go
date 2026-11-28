@@ -208,4 +208,9 @@ func TestListStale(t *testing.T) {
 	if b.String() != want {
 		t.Errorf("listing:\n%s\nwant:\n%s", b.String(), want)
 	}
+	for _, since := range []string{"", "2026-11", "15.11.2026", "2026-13-01"} {
+		if err := listStale(&b, m, lastRuns(runs), since); err == nil || !strings.Contains(err.Error(), "-since") {
+			t.Errorf("-since %q: err = %v, want a refusal", since, err)
+		}
+	}
 }
